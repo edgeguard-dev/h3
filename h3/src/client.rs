@@ -8,7 +8,10 @@ use std::{
 };
 
 use bytes::{Buf, Bytes, BytesMut};
-use futures_util::future;
+use futures_util::{
+    future::{self, Future},
+    ready,
+};
 use http::{request, HeaderMap, Response};
 use tracing::{info, trace};
 
@@ -16,12 +19,14 @@ use crate::{
     config::Config,
     connection::{self, ConnectionInner, ConnectionState, SharedStateRef},
     error::{Code, Error, ErrorLevel},
+    ext::Datagram,
     frame::FrameStream,
     proto::{frame::Frame, headers::Header, push::PushId},
     qpack,
-    quic::{self, StreamId},
+    quic::{self, RecvDatagramExt, SendDatagramExt, StreamId},
     stream::{self, BufRecvStream},
 };
+use pin_project_lite::pin_project;
 
 /// Start building a new HTTP/3 client
 pub fn builder() -> Builder {
@@ -687,6 +692,11 @@ where
         self.inner.recv_data().await
     }
 
+    /// Poll for data sent from  the server.
+    pub fn poll_data(&mut self, cx: &mut Context<'_>) -> Poll<Result<Option<impl Buf>, Error>> {
+        self.inner.poll_data(cx)
+    }
+
     /// Receive an optional set of trailers for the response.
     pub async fn recv_trailers(&mut self) -> Result<Option<HeaderMap>, Error> {
         let res = self.inner.recv_trailers().await;
@@ -757,5 +767,63 @@ where
     ) {
         let (send, recv) = self.inner.split();
         (RequestStream { inner: send }, RequestStream { inner: recv })
+    }
+}
+
+impl<C, B> Connection<C, B>
+where
+    C: quic::Connection<B> + SendDatagramExt<B>,
+    B: Buf,
+{
+    /// Sends a datagram
+    pub fn send_datagram(&mut self, stream_id: StreamId, data: B) -> Result<(), Error> {
+        self.inner
+            .conn
+            .send_datagram(Datagram::new(stream_id, data))?;
+        tracing::info!("Sent datagram");
+
+        Ok(())
+    }
+}
+
+pin_project! {
+    /// Future for [`Connection::read_datagram`]
+    pub struct ReadDatagram<'a, C, B>
+    where
+            C: quic::Connection<B>,
+            B: Buf,
+        {
+            conn: &'a mut Connection<C, B>,
+            _marker: PhantomData<B>,
+        }
+}
+
+impl<'a, C, B> Future for ReadDatagram<'a, C, B>
+where
+    C: quic::Connection<B> + RecvDatagramExt,
+    B: Buf,
+{
+    type Output = Result<Option<Datagram<C::Buf>>, Error>;
+
+    fn poll(mut self: std::pin::Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        tracing::trace!("poll: read_datagram");
+        match ready!(self.conn.inner.conn.poll_accept_datagram(cx))? {
+            Some(v) => Poll::Ready(Ok(Some(Datagram::decode(v)?))),
+            None => Poll::Ready(Ok(None)),
+        }
+    }
+}
+
+impl<C, B> Connection<C, B>
+where
+    C: quic::Connection<B> + RecvDatagramExt,
+    B: Buf,
+{
+    /// Reads an incoming datagram
+    pub fn read_datagram(&mut self) -> ReadDatagram<C, B> {
+        ReadDatagram {
+            conn: self,
+            _marker: PhantomData,
+        }
     }
 }
