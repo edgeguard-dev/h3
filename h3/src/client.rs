@@ -8,7 +8,7 @@ use std::{
 };
 
 use bytes::{Buf, Bytes, BytesMut};
-use futures_util::future;
+use futures_util::future::{self};
 use http::{request, HeaderMap, Response};
 use tracing::{info, trace};
 
@@ -687,6 +687,11 @@ where
         self.inner.recv_data().await
     }
 
+    /// Poll for data sent from  the server.
+    pub fn poll_data(&mut self, cx: &mut Context<'_>) -> Poll<Result<Option<impl Buf>, Error>> {
+        self.inner.poll_data(cx)
+    }
+
     /// Receive an optional set of trailers for the response.
     pub async fn recv_trailers(&mut self) -> Result<Option<HeaderMap>, Error> {
         let res = self.inner.recv_trailers().await;
@@ -703,6 +708,11 @@ where
         // TODO take by value to prevent any further call as this request is cancelled
         // rename `cancel()` ?
         self.inner.stream.stop_sending(error_code)
+    }
+
+    /// QUIC Stream ID of this stream
+    pub fn recv_id(&self) -> StreamId {
+        self.inner.stream.id()
     }
 }
 
