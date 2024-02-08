@@ -836,13 +836,12 @@ where
     C: quic::Connection<B> + RecvDatagramExt,
     B: Buf,
 {
-    type Output = Result<Option<Datagram<C::Buf>>, Error>;
+    type Output = Result<Datagram<C::Buf>, Error>;
 
-    fn poll(mut self: std::pin::Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+    fn poll(self: std::pin::Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         tracing::trace!("poll: read_datagram");
         match ready!(self.conn.inner.conn.poll_accept_datagram(cx))? {
-            Some(v) => Poll::Ready(Ok(Some(Datagram::decode(v)?))),
-            None => Poll::Ready(Ok(None)),
+            v => Poll::Ready(Ok(Datagram::decode(v)?)),
         }
     }
 }

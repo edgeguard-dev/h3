@@ -19,7 +19,6 @@ use futures::{
     stream::{self, BoxStream},
     StreamExt,
 };
-use quinn::ReadDatagram;
 pub use quinn::{
     self, crypto::Session, AcceptBi, AcceptUni, Endpoint, OpenBi, OpenUni, VarInt, WriteError,
 };
@@ -40,7 +39,6 @@ pub struct Connection {
     opening_bi: Option<BoxStream<'static, <OpenBi<'static> as Future>::Output>>,
     incoming_uni: BoxStream<'static, <AcceptUni<'static> as Future>::Output>,
     opening_uni: Option<BoxStream<'static, <OpenUni<'static> as Future>::Output>>,
-    datagrams: BoxStream<'static, <ReadDatagram<'static> as Future>::Output>,
 }
 
 impl Connection {
@@ -56,9 +54,6 @@ impl Connection {
                 Some((conn.accept_uni().await, conn))
             })),
             opening_uni: None,
-            datagrams: Box::pin(stream::unfold(conn, |conn| async {
-                Some((conn.read_datagram().await, conn))
-            })),
         }
     }
 }
@@ -240,7 +235,7 @@ where
 {
     type Error = SendDatagramError;
 
-    fn send_datagram(&mut self, data: Datagram<B>) -> Result<(), SendDatagramError> {
+    fn send_datagram(&self, data: Datagram<B>) -> Result<(), SendDatagramError> {
         // TODO investigate static buffer from known max datagram size
         let mut buf = BytesMut::new();
         data.encode(&mut buf);
@@ -257,13 +252,13 @@ impl quic::RecvDatagramExt for Connection {
 
     #[inline]
     fn poll_accept_datagram(
-        &mut self,
+        &self,
         cx: &mut task::Context<'_>,
-    ) -> Poll<Result<Option<Self::Buf>, Self::Error>> {
-        match ready!(self.datagrams.poll_next_unpin(cx)) {
-            Some(Ok(x)) => Poll::Ready(Ok(Some(x))),
-            Some(Err(e)) => Poll::Ready(Err(e.into())),
-            None => Poll::Ready(Ok(None)),
+    ) -> Poll<Result<Self::Buf, Self::Error>> {
+        let mut read_dgram = Box::pin(self.conn.read_datagram());
+        match ready!(Pin::new(&mut read_dgram).poll(cx)) {
+            Ok(x) => Poll::Ready(Ok(x)),
+            Err(e) => Poll::Ready(Err(e.into())),
         }
     }
 }

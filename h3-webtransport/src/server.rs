@@ -377,16 +377,15 @@ where
     type Output = Result<Option<(SessionId, C::Buf)>, Error>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let mut conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().unwrap();
         match ready!(conn.inner.conn.poll_accept_datagram(cx))? {
-            Some(v) => {
+            v => {
                 let datagram = Datagram::decode(v)?;
                 Poll::Ready(Ok(Some((
                     datagram.stream_id().into(),
                     datagram.into_payload(),
                 ))))
             }
-            None => Poll::Ready(Ok(None)),
         }
     }
 }

@@ -91,7 +91,7 @@ pub trait SendDatagramExt<B: Buf> {
     type Error: Into<Box<dyn Error>>;
 
     /// Send a datagram
-    fn send_datagram(&mut self, data: Datagram<B>) -> Result<(), Self::Error>;
+    fn send_datagram(&self, data: Datagram<B>) -> Result<(), Self::Error>;
 }
 
 /// Extends the `Connection` trait for receiving datagrams
@@ -105,9 +105,9 @@ pub trait RecvDatagramExt {
 
     /// Poll the connection for incoming datagrams.
     fn poll_accept_datagram(
-        &mut self,
+        &self,
         cx: &mut task::Context<'_>,
-    ) -> Poll<Result<Option<Self::Buf>, Self::Error>>;
+    ) -> Poll<Result<Self::Buf, Self::Error>>;
 }
 
 /// Trait for opening outgoing streams
